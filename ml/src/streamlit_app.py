@@ -5,9 +5,8 @@ from ml.src.eligibility_rules import check_eligibility
 from ml.src.text_extraction import extract_features_from_text
 from ml.src.reason_engine import generate_reasons
 
-# --------------------------------------------------
 # Page config
-# --------------------------------------------------
+
 st.set_page_config(page_title="Insurance Fraud Detection", layout="centered")
 
 st.title("🛡️ General Insurance Fraud Detection System")
@@ -16,17 +15,15 @@ st.write(
     "The system evaluates eligibility, fraud risk, and provides explainable decisions."
 )
 
-# --------------------------------------------------
 # Input mode selector (OUTSIDE forms)
-# --------------------------------------------------
+
 input_mode = st.radio(
     "Choose input method:",
     ["Claim Details (Structured)", "Claim Description (Text)"]
 )
 
-# ==================================================
 # MODE 1: CLAIM DESCRIPTION (TEXT) — CLEAN
-# ==================================================
+
 if input_mode == "Claim Description (Text)":
 
     with st.form("text_claim_form"):
@@ -64,9 +61,8 @@ if input_mode == "Claim Description (Text)":
 
         submitted = st.form_submit_button("🔍 Evaluate Claim")
 
-# ==================================================
 # MODE 2: STRUCTURED CLAIM — CLEAN
-# ==================================================
+
 else:
 
     with st.form("structured_claim_form"):
@@ -90,9 +86,8 @@ else:
 
         submitted = st.form_submit_button("🔍 Evaluate Claim")
 
-# ==================================================
 # Decision logic (RUNS ONLY AFTER SUBMIT)
-# ==================================================
+
 if "submitted" in locals() and submitted:
 
     input_data = {

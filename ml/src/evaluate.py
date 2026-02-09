@@ -3,9 +3,8 @@ import joblib
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
 
-# -----------------------------
 # Load dataset
-# -----------------------------
+
 DATA_PATH = "ml/data/insurance_claims.csv"
 
 df = pd.read_csv(DATA_PATH)
@@ -22,9 +21,8 @@ X_train, X_test, y_train, y_test = train_test_split(
     random_state=42
 )
 
-# -----------------------------
 # Load trained pipelines
-# -----------------------------
+
 models = {
     "logistic_regression": "ml/artifacts/logistic_regression_pipeline.pkl",
     "random_forest": "ml/artifacts/random_forest_pipeline.pkl",
@@ -34,9 +32,8 @@ models = {
 best_model_name = None
 best_fraud_recall = 0.0
 
-# -----------------------------
 # Evaluate models
-# -----------------------------
+
 for name, path in models.items():
     pipeline = joblib.load(path)
     preds = pipeline.predict(X_test)
@@ -51,9 +48,8 @@ for name, path in models.items():
         best_fraud_recall = fraud_recall
         best_model_name = name
 
-# -----------------------------
 # Save best model
-# -----------------------------
+
 best_model_path = models[best_model_name]
 best_model = joblib.load(best_model_path)
 
