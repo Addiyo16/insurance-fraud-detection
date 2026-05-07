@@ -11,6 +11,12 @@ ml/artifacts/*.pkl
 # Local datasets
 ml/data/*.csv
 
+# Environment files
+.env
+
+# Streamlit local config
+.streamlit/
+
 # IDE / OS
 .vscode/
 .idea/

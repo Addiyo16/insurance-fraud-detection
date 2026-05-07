@@ -1,0 +1,4 @@
+cloud deployment 
+analysis dashboard
+graphs and charts
+document reading
