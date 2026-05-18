@@ -18,16 +18,16 @@ def run(data):
     hospitalized = bool(incident.get("hospitalized", False))
 
     if not policy.get("active", True):
-        return "Reject", ["Policy is inactive on the claim event date"]
+        return "Reject", ["Policy is inactive on the claim event date"], 98
     if sum_assured <= 0:
-        return "Needs Review", ["Sum assured is missing or invalid"]
+        return "Needs Review", ["Sum assured is missing or invalid"], 55
     if claim_amount <= 0:
-        return "Needs Review", ["Claim amount is missing or invalid"]
+        return "Needs Review", ["Claim amount is missing or invalid"], 50
     if claim_amount > sum_assured:
-        return "Reject", ["Claim amount exceeds sum assured"]
+        return "Reject", ["Claim amount exceeds sum assured"], 98
 
     if not docs.get("death_certificate"):
-        return "Needs Review", ["Death certificate is mandatory for life claim review"]
+        return "Needs Review", ["Death certificate is mandatory for life claim review"], 60
 
     risk_score += add_text_mismatch(
         reasons,
@@ -46,7 +46,7 @@ def run(data):
     )
 
     if cause == "illness" and not docs.get("medical_report"):
-        return "Needs Review", ["Medical report is required for illness-related life claim"]
+        return "Needs Review", ["Medical report is required for illness-related life claim"], 55
     if cause == "accident" and not docs.get("police_report"):
         reasons.append("Police/FIR report is missing for accidental death")
         risk_score += 30

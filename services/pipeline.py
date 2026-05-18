@@ -13,10 +13,15 @@ def _clamp_score(score):
 
 
 def run_pipeline(domain, claim_data):
-    rule_decision, reasons = apply_rules(domain, claim_data)
+    rule_result = apply_rules(domain, claim_data)
+    if len(rule_result) == 3:
+        rule_decision, reasons, rule_score = rule_result
+    else:
+        rule_decision, reasons = rule_result
+        rule_score = 90 if rule_decision == "Reject" else 50 if rule_decision == "Needs Review" else 20
 
     if rule_decision == "Reject":
-        fraud_score = 90
+        fraud_score = _clamp_score(rule_score)
         return {
             "decision": "Reject",
             "fraud_score": fraud_score,
@@ -26,15 +31,17 @@ def run_pipeline(domain, claim_data):
                 reasons,
                 decision="Reject",
                 claim_data=claim_data,
+                rule_score=fraud_score,
             ),
             "reasons": reasons,
             "rule_decision": rule_decision,
             "ml_score": None,
+            "rule_score": fraud_score,
         }
 
-    rule_score = 50 if rule_decision == "Needs Review" else 20
+    rule_score = _clamp_score(rule_score)
     ml_score = _clamp_score(predict_fraud(domain, claim_data))
-    final_score = round((rule_score * 0.6) + (ml_score * 0.4), 2)
+    final_score = round((rule_score * 0.75) + (ml_score * 0.25), 2)
     decision = make_final_decision(final_score, rule_decision)
 
     if domain == "Financial":
@@ -51,8 +58,11 @@ def run_pipeline(domain, claim_data):
             reasons,
             decision=decision,
             claim_data=claim_data,
+            rule_score=round(rule_score, 2),
+            ml_score=round(ml_score, 2),
         ),
         "reasons": reasons,
         "rule_decision": rule_decision,
+        "rule_score": round(rule_score, 2),
         "ml_score": round(ml_score, 2),
     }

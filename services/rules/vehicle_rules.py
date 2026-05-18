@@ -3,6 +3,7 @@ from services.rules.evidence import (
     final_decision,
     normalize_vehicle_number,
     number,
+    score_band,
 )
 
 
@@ -26,10 +27,10 @@ def run(data):
     policy_age_months = number(policy.get("age_months", 12))
 
     if idv <= 0:
-        return "Needs Review", ["Vehicle IDV is missing or invalid, so coverage cannot be verified"]
+        return "Needs Review", ["Vehicle IDV is missing or invalid, so coverage cannot be verified"], 55
 
     if estimated_cost <= 0:
-        return "Needs Review", ["Repair estimate is missing or invalid"]
+        return "Needs Review", ["Repair estimate is missing or invalid"], 50
 
     damage_ratio = estimated_cost / idv
 
@@ -41,7 +42,7 @@ def run(data):
 
     rc_vehicle_number = document_info.get("vehicle_number")
     if rc_vehicle_number and normalize_vehicle_number(vehicle.get("number")) != normalize_vehicle_number(rc_vehicle_number):
-        return "Reject", ["Vehicle number on RC does not match the claim form"]
+        return "Reject", ["Vehicle number on RC does not match the claim form"], 95
 
     risk_score += add_amount_mismatch(
         reasons,
@@ -68,23 +69,26 @@ def run(data):
         risk_score += 35
 
     if estimated_cost > idv:
-        return "Reject", ["Claimed repair cost exceeds insured declared value (IDV)"]
+        return "Reject", ["Claimed repair cost exceeds insured declared value (IDV)"], 98
 
-    if accident_type == "minor" and idv < 200000 and damage_ratio >= 0.50:
-        return "Reject", [
-            "Minor accident on a low-IDV vehicle has repair cost above 50% of IDV, which is materially inconsistent with the reported severity"
-        ]
-    if accident_type == "minor" and idv < 200000 and damage_ratio >= 0.40:
+    if accident_type == "minor" and damage_ratio >= 0.75:
+        reasons.append(
+            "Minor accident has repair cost above 75% of IDV, close to constructive total-loss behavior"
+        )
+        risk_score += 75
+    elif accident_type == "minor" and damage_ratio >= 0.50:
+        reasons.append(
+            "Minor accident has repair cost above 50% of IDV; do not auto-approve without independent surveyor validation and image-to-estimate matching"
+        )
+        risk_score += score_band(damage_ratio, [(0.50, 45), (0.60, 55), (0.70, 65)])
+    elif accident_type == "minor" and idv < 200000 and damage_ratio >= 0.40:
         reasons.append(
             "Minor accident on a low-IDV vehicle has a high repair-to-IDV ratio, which is inconsistent with normal claim severity"
         )
-        risk_score += 45
-    elif accident_type == "minor" and damage_ratio >= 0.65:
-        reasons.append("Minor accident has a repair estimate above 65% of IDV")
-        risk_score += 45
+        risk_score += 40
     elif accident_type == "minor" and damage_ratio >= 0.35:
         reasons.append("Minor accident repair estimate is high relative to IDV")
-        risk_score += 25
+        risk_score += score_band(damage_ratio, [(0.35, 20), (0.45, 30)])
 
     if accident_type == "major" and damage_ratio < 0.08:
         reasons.append("Major accident has unusually low repair cost relative to IDV")
@@ -95,7 +99,7 @@ def run(data):
         risk_score += 30
     elif damage_ratio >= 0.60:
         reasons.append("Repair estimate is materially high compared with IDV")
-        risk_score += 15
+        risk_score += 10
 
     if report_delay_hours > 72:
         reasons.append("Accident was reported after 72 hours")

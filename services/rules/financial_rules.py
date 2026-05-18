@@ -19,14 +19,14 @@ def run(data):
     policy_age = number(policy.get("age_months", 12))
 
     if income <= 0 or loan <= 0:
-        return "Needs Review", ["Income or loan amount is missing or invalid"]
+        return "Needs Review", ["Income or loan amount is missing or invalid"], 55
     if claim <= 0:
-        return "Needs Review", ["Claim amount is missing or invalid"]
+        return "Needs Review", ["Claim amount is missing or invalid"], 50
 
     required_docs = ["kyc", "income_proof", "bank_statement", "loan_document"]
     missing = [doc for doc in required_docs if not docs.get(doc)]
     if missing:
-        return "Needs Review", [f"Missing financial claim documents: {', '.join(missing)}"]
+        return "Needs Review", [f"Missing financial claim documents: {', '.join(missing)}"], 55
 
     risk_score += add_amount_mismatch(
         reasons,
@@ -54,12 +54,12 @@ def run(data):
     )
 
     if claim > loan:
-        return "Reject", ["Claim amount exceeds the covered loan amount"]
+        return "Reject", ["Claim amount exceeds the covered loan amount"], 98
 
     if tenure > 0 and emi > 0:
         expected_emi = loan / tenure
         if emi < expected_emi * 0.2:
-            return "Reject", ["Declared EMI is unrealistically low for the loan amount and tenure"]
+            return "Reject", ["Declared EMI is unrealistically low for the loan amount and tenure"], 92
         if emi < expected_emi * 0.5:
             reasons.append("EMI is lower than expected for loan amount and tenure")
             risk_score += 20

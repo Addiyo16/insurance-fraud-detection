@@ -44,10 +44,23 @@ def add_amount_mismatch(reasons, label, claim_value, document_value, tolerance=0
     return 0
 
 
-def final_decision(risk_score, reasons, approve_reason):
-    if risk_score >= 85:
+def score_band(value, bands):
+    """Return points for a value using ordered threshold bands.
+
+    Example: score_band(0.6, [(0.3, 15), (0.5, 35), (0.75, 70)])
+    returns 35.
+    """
+    points = 0
+    for threshold, band_points in bands:
+        if value >= threshold:
+            points = band_points
+    return points
+
+
+def final_decision(risk_score, reasons, approve_reason, reject_at=85, review_at=35):
+    if risk_score >= reject_at:
         decision = "Reject"
-    elif risk_score >= 35:
+    elif risk_score >= review_at:
         decision = "Needs Review"
     else:
         decision = "Approve"
@@ -55,4 +68,4 @@ def final_decision(risk_score, reasons, approve_reason):
     if not reasons:
         reasons.append(approve_reason)
 
-    return decision, reasons
+    return decision, reasons, round(min(max(risk_score, 0), 100), 2)

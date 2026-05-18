@@ -39,12 +39,12 @@ def run(data):
     admission_type = str(admission.get("type", "")).lower()
 
     if total_bill <= 0:
-        return "Needs Review", ["Final bill amount is missing or invalid"]
+        return "Needs Review", ["Final bill amount is missing or invalid"], 50
 
     required_docs = ["final_bill", "medical_report", "kyc"]
     missing = [doc for doc in required_docs if docs.get(doc) is None]
     if missing:
-        return "Needs Review", [f"Missing mandatory health claim documents: {', '.join(missing)}"]
+        return "Needs Review", [f"Missing mandatory health claim documents: {', '.join(missing)}"], 55
 
     risk_score += add_text_mismatch(
         reasons,
@@ -75,15 +75,15 @@ def run(data):
     per_day = total_bill / days
 
     if total_bill > baseline["total"] * 3:
-        return "Reject", ["Final bill is far above the expected range for the stated diagnosis"]
+        return "Reject", ["Final bill is far above the expected range for the stated diagnosis"], 95
     if category == "minor" and icu > 20000:
-        return "Reject", ["ICU charges are inconsistent with a minor diagnosis"]
+        return "Reject", ["ICU charges are inconsistent with a minor diagnosis"], 92
     if days <= 2 and total_bill > baseline["total"] * 2:
-        return "Reject", ["Short hospital stay has an inflated final bill"]
+        return "Reject", ["Short hospital stay has an inflated final bill"], 90
     if per_day > baseline["per_day"] * 3:
-        return "Reject", ["Per-day hospital charge is far above the expected treatment range"]
+        return "Reject", ["Per-day hospital charge is far above the expected treatment range"], 92
     if total_bill > 0 and medicine > total_bill * 0.7:
-        return "Reject", ["Medicine charges exceed 70% of the total bill"]
+        return "Reject", ["Medicine charges exceed 70% of the total bill"], 90
 
     expected_total = baseline["per_day"] * days
     if admission_type == "emergency" and total_bill < expected_total * 0.2:
@@ -101,7 +101,7 @@ def run(data):
         risk_score += 25
     if per_day > baseline["per_day"] * 1.5:
         reasons.append("High per-day hospital cost for the diagnosis category")
-        risk_score += 25
+        risk_score += 30
     if total_bill > baseline["total"] * 1.5:
         reasons.append("Total bill is high for the diagnosis category")
         risk_score += 20

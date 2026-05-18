@@ -18,7 +18,47 @@ def _next_action(decision):
     )
 
 
-def generate_explanation(domain, fraud_score, reasons, decision=None, claim_data=None):
+def _employee_checklist(domain, decision):
+    if decision == "Approve":
+        return [
+            "Confirm mandatory documents are present and readable.",
+            "Proceed with normal settlement authority and audit sampling.",
+        ]
+
+    domain_checks = {
+        "Vehicle": [
+            "Compare RC vehicle number, policy IDV, accident images, police/FIR report, and garage/surveyor estimate.",
+            "For minor accidents above 50% of IDV, require independent surveyor confirmation before any settlement.",
+            "Check policy start date, report delay, prior claims, salvage/total-loss possibility, and estimate line items.",
+        ],
+        "Health": [
+            "Compare final bill, diagnosis, admission days, discharge summary, ICU use, medicine charges, and hospital network status.",
+            "Verify medical necessity when minor diagnosis has planned admission, ICU charges, or high per-day cost.",
+            "Check duplicate bills, inflated consumables, unbundled line items, and prior claim frequency.",
+        ],
+        "Life": [
+            "Compare death certificate, policy status, sum assured, cause of death, medical records, and police/FIR report where applicable.",
+            "Escalate early-duration and high-sum-assured claims for contestability and underwriting review.",
+            "Verify nominee, event date, premium status, prior related claims, and cause-of-death consistency.",
+        ],
+        "Financial": [
+            "Compare KYC, income proof, bank statement, loan document, EMI, tenure, loan amount, and claim amount.",
+            "Review debt-to-income, EMI affordability, early claim timing, and full-loan claim behavior.",
+            "Validate bank statement cashflow and check for inflated income or altered loan documents.",
+        ],
+    }
+    return domain_checks.get(domain, ["Verify policy, documents, amounts, timing, history, and external evidence."])
+
+
+def generate_explanation(
+    domain,
+    fraud_score,
+    reasons,
+    decision=None,
+    claim_data=None,
+    rule_score=None,
+    ml_score=None,
+):
     try:
         decision = decision or "Pending"
         reasons = reasons or ["No material fraud indicators were found during automated checks."]
@@ -29,9 +69,12 @@ def generate_explanation(domain, fraud_score, reasons, decision=None, claim_data
             f"Domain: {domain}",
             f"Decision: {decision}",
             f"Fraud risk score: {fraud_score}%",
-            "",
-            "Decision rationale:",
         ]
+        if rule_score is not None:
+            lines.append(f"Rule/evidence score: {rule_score}%")
+        if ml_score is not None:
+            lines.append(f"ML anomaly score: {ml_score}%")
+        lines.extend(["", "Decision rationale:"])
 
         if decision == "Approve":
             lines.append(
@@ -57,6 +100,9 @@ def generate_explanation(domain, fraud_score, reasons, decision=None, claim_data
 
         lines.extend(["", "Evidence considered:"])
         lines.extend([f"- {reason}" for reason in reasons])
+
+        lines.extend(["", "Fast employee checklist:"])
+        lines.extend([f"- {item}" for item in _employee_checklist(domain, decision)])
 
         lines.extend(["", "Relevant review standards:"])
         lines.extend([f"- {doc['title']}: {doc['text']}" for doc in context])
