@@ -39,6 +39,37 @@ if "history" not in st.session_state:
 # =====================================================
 import streamlit as st
 
+def document_verification_ui(domain):
+    with st.expander("Document verification values"):
+        st.caption("Enter values read from uploaded documents or OCR so the system can compare them with the claim form.")
+
+        if domain == "Health":
+            return {
+                "diagnosis": st.text_input("Diagnosis shown in medical report"),
+                "total_bill": st.number_input("Final bill amount shown in document", 0),
+                "days": st.number_input("Hospitalization days shown in document", 0),
+            }
+
+        if domain == "Vehicle":
+            return {
+                "vehicle_number": st.text_input("Vehicle number shown on RC"),
+                "idv": st.number_input("IDV shown on policy/RC", 0),
+                "estimated_cost": st.number_input("Repair estimate shown in survey/garage document", 0),
+                "accident_type": st.selectbox("Accident severity shown in evidence", ["", "Minor", "Major"]),
+            }
+
+        if domain == "Life":
+            return {
+                "cause": st.selectbox("Cause shown in death/medical document", ["", "Natural", "Illness", "Accident"]),
+                "sum_assured": st.number_input("Sum assured shown in policy document", 0),
+            }
+
+        return {
+            "income": st.number_input("Income shown in income proof/bank statement", 0),
+            "loan_amount": st.number_input("Loan amount shown in loan document", 0),
+            "emi_amount": st.number_input("EMI shown in loan document/bank statement", 0),
+        }
+
 def health_ui():
     data = {}
 
@@ -123,6 +154,8 @@ def health_ui():
         # Assign to data
         data["documents"] = st.session_state.health_docs
 
+        data["document_info"] = document_verification_ui("Health")
+
     return data
 
 # =====================================================
@@ -166,6 +199,7 @@ def vehicle_ui():
             "police": st.file_uploader("Police Report", key="doc_police"),
             "images": st.file_uploader("Accident Images", key="doc_images")
         }
+        data["document_info"] = document_verification_ui("Vehicle")
 
     return data
 
@@ -184,13 +218,16 @@ def life_ui():
 
     with tabs[0]:
         data["policy"] = {
-            "duration": st.number_input("Policy Duration (years)", 0.0),
+            "age_years": st.number_input("Policy Age (years)", 0.0),
+            "sum_assured": st.number_input("Sum Assured", 0),
+            "active": st.checkbox("Policy Active", True),
             "type": st.selectbox("Policy Type", ["Term", "Whole Life"])
         }
 
     with tabs[1]:
         data["incident"] = {
-            "cause": st.text_input("Cause of Death"),
+            "cause": st.selectbox("Cause of Death", ["Natural", "Illness", "Accident"]),
+            "hospitalized": st.checkbox("Hospitalization Record Available", False),
             "date": st.date_input("Date of Death")
         }
 
@@ -201,9 +238,11 @@ def life_ui():
 
     with tabs[3]:
         data["documents"] = {
-            "death": st.file_uploader("Death Certificate"),
-            "medical": st.file_uploader("Medical Report")
+            "death_certificate": st.file_uploader("Death Certificate"),
+            "medical_report": st.file_uploader("Medical Report"),
+            "police_report": st.file_uploader("Police Report")
         }
+        data["document_info"] = document_verification_ui("Life")
 
     return data
 
@@ -242,6 +281,7 @@ def financial_ui():
             "bank_statement": st.file_uploader("Bank Statement"),
             "loan_document": st.file_uploader("Loan Agreement")
         }
+        data["document_info"] = document_verification_ui("Financial")
 
     return data
 
@@ -293,8 +333,7 @@ elif domain == "Vehicle":
 
 elif domain == "Life":
     docs_uploaded = all([
-        documents.get("death"),
-        documents.get("medical")
+        documents.get("death_certificate")
     ])
 
 elif domain == "Financial":

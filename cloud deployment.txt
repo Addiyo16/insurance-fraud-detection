@@ -1,4 +1,17 @@
-cloud deployment 
-analysis dashboard
-graphs and charts
-document reading
+GCP free-tier friendly deployment target: Cloud Run.
+
+Cloud Run can scale to zero and is a good fit for this Streamlit app because it
+runs from a container and only needs local files. Keep max instances low while
+testing so you do not accidentally create avoidable cost.
+
+Commands:
+
+gcloud auth login
+gcloud config set project YOUR_PROJECT_ID
+gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com
+gcloud run deploy insurance-fraud-detection --source . --region us-central1 --allow-unauthenticated --memory 1Gi --cpu 1 --max-instances 1
+
+After deploy:
+- Open the Cloud Run URL.
+- Set budget alerts in Google Cloud Billing.
+- Review current free-tier limits on the official Google Cloud Free Program page.

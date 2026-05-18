@@ -1,143 +1,119 @@
-def run(data):
+from services.rules.evidence import add_amount_mismatch, add_text_mismatch, final_decision, number
 
+
+DIAGNOSIS_BASELINES = {
+    "minor": {"per_day": 8000, "total": 50000},
+    "moderate": {"per_day": 20000, "total": 200000},
+    "major": {"per_day": 50000, "total": 500000},
+}
+
+
+def _diagnosis_category(diagnosis):
+    diagnosis = str(diagnosis or "").lower()
+    if any(term in diagnosis for term in ["fever", "cold", "viral", "flu"]):
+        return "minor"
+    if any(term in diagnosis for term in ["infection", "pneumonia", "dengue", "typhoid"]):
+        return "moderate"
+    if any(term in diagnosis for term in ["surgery", "operation", "fracture", "cardiac", "cancer"]):
+        return "major"
+    return "moderate"
+
+
+def run(data):
     reasons = []
-    decision = "Approve"
     risk_score = 0
 
-    # ---------------- EXTRACT ----------------
-    policy = data.get("policy", {})
     financial = data.get("financial", {})
     hospital = data.get("hospital", {})
     admission = data.get("admission", {})
     docs = data.get("documents", {})
-    history = data.get("history", 0)
+    document_info = data.get("document_info", {})
+    history = number(data.get("history", 0))
 
-    total_bill = financial.get("total_bill", 0)
-    icu = financial.get("icu", 0)
-    medicine = financial.get("medicine", 0)
+    total_bill = number(financial.get("total_bill"))
+    icu = number(financial.get("icu"))
+    medicine = number(financial.get("medicine"))
+    diagnosis = hospital.get("diagnosis", "")
+    network = bool(hospital.get("network", True))
+    days = max(number(admission.get("days"), 1), 1)
+    admission_type = str(admission.get("type", "")).lower()
 
-    diagnosis = hospital.get("diagnosis", "").lower()
-    network = hospital.get("network", True)
-
-    days = max(admission.get("days", 1), 1)
-    admission_type = admission.get("type", "").lower()
-
-    # ---------------- DERIVED ----------------
-    per_day = total_bill / days if days > 0 else total_bill
-
-    # =====================================================
-    # 🔴 1. CONTEXT-AWARE BASELINES
-    # =====================================================
-
-    BASELINES = {
-        "minor": {"per_day": 8000, "total": 50000},
-        "moderate": {"per_day": 20000, "total": 200000},
-        "major": {"per_day": 50000, "total": 500000}
-    }
-
-    if any(x in diagnosis for x in ["fever", "cold", "viral", "flu"]):
-        category = "minor"
-    elif any(x in diagnosis for x in ["infection", "pneumonia"]):
-        category = "moderate"
-    elif any(x in diagnosis for x in ["surgery", "operation", "fracture"]):
-        category = "major"
-    else:
-        category = "moderate"
-
-    baseline = BASELINES[category]
-
-    # =====================================================
-    # 🔴 2. HARD RULES
-    # =====================================================
-
-    if total_bill > baseline["total"] * 3:
-        return "Reject", ["Bill exceeds expected range for diagnosis"]
-
-    if category == "minor" and icu > 20000:
-        return "Reject", ["ICU usage for minor illness"]
-
-    if days <= 2 and total_bill > baseline["total"] * 2:
-        return "Reject", ["Short stay with inflated billing"]
-
-    if per_day > baseline["per_day"] * 3:
-        return "Reject", ["Unrealistic per-day hospital charges"]
-
-    if medicine > total_bill * 0.7:
-        return "Reject", ["Unusual medicine cost proportion"]
-
-    # =====================================================
-    # 🔹 3. DOCUMENT VALIDATION
-    # =====================================================
+    if total_bill <= 0:
+        return "Needs Review", ["Final bill amount is missing or invalid"]
 
     required_docs = ["final_bill", "medical_report", "kyc"]
-    missing = [d for d in required_docs if docs.get(d) is None]
-
+    missing = [doc for doc in required_docs if docs.get(doc) is None]
     if missing:
-        return "Needs Review", [f"Missing documents: {', '.join(missing)}"]
+        return "Needs Review", [f"Missing mandatory health claim documents: {', '.join(missing)}"]
 
-    # =====================================================
-    # 🔹 4. LOW BILL ANOMALY (YOUR NEW LOGIC)
-    # =====================================================
+    risk_score += add_text_mismatch(
+        reasons,
+        "Diagnosis",
+        diagnosis,
+        document_info.get("diagnosis"),
+        risk_points=35,
+    )
+    risk_score += add_amount_mismatch(
+        reasons,
+        "final bill",
+        total_bill,
+        document_info.get("total_bill"),
+        tolerance=0.03,
+        risk_points=35,
+    )
+    risk_score += add_amount_mismatch(
+        reasons,
+        "hospitalization days",
+        days,
+        document_info.get("days"),
+        tolerance=0.0,
+        risk_points=25,
+    )
+
+    category = _diagnosis_category(diagnosis)
+    baseline = DIAGNOSIS_BASELINES[category]
+    per_day = total_bill / days
+
+    if total_bill > baseline["total"] * 3:
+        return "Reject", ["Final bill is far above the expected range for the stated diagnosis"]
+    if category == "minor" and icu > 20000:
+        return "Reject", ["ICU charges are inconsistent with a minor diagnosis"]
+    if days <= 2 and total_bill > baseline["total"] * 2:
+        return "Reject", ["Short hospital stay has an inflated final bill"]
+    if per_day > baseline["per_day"] * 3:
+        return "Reject", ["Per-day hospital charge is far above the expected treatment range"]
+    if total_bill > 0 and medicine > total_bill * 0.7:
+        return "Reject", ["Medicine charges exceed 70% of the total bill"]
 
     expected_total = baseline["per_day"] * days
-
-    if admission_type == "emergency" and days >= 1:
-
-        if total_bill < expected_total * 0.2:
-            return "Needs Review", ["Bill significantly lower than expected for treatment"]
-
-        elif total_bill < expected_total * 0.5:
-            risk_score += 15
-            reasons.append("Bill lower than expected range")
-
-    # =====================================================
-    # 🔹 5. CONSISTENCY CHECKS
-    # =====================================================
+    if admission_type == "emergency" and total_bill < expected_total * 0.2:
+        reasons.append("Emergency admission bill is materially lower than expected and may indicate wrong claim details")
+        risk_score += 25
+    elif total_bill < expected_total * 0.5:
+        reasons.append("Bill is lower than expected for diagnosis and stay length")
+        risk_score += 10
 
     if admission_type == "planned" and category == "minor":
+        reasons.append("Planned hospitalization for minor diagnosis requires medical necessity review")
         risk_score += 20
-        reasons.append("Planned admission for minor illness")
-
     if icu > 0 and days <= 1:
+        reasons.append("ICU charge appears in a one-day admission")
         risk_score += 25
-        reasons.append("ICU used for very short stay")
-
-    if category == "minor" and total_bill > baseline["total"]:
-        risk_score += 30
-        reasons.append("Cost exceeds expected for minor illness")
-
-    # =====================================================
-    # 🔹 6. RISK SIGNALS
-    # =====================================================
-
     if per_day > baseline["per_day"] * 1.5:
+        reasons.append("High per-day hospital cost for the diagnosis category")
         risk_score += 25
-        reasons.append("High per-day cost")
-
     if total_bill > baseline["total"] * 1.5:
+        reasons.append("Total bill is high for the diagnosis category")
         risk_score += 20
-        reasons.append("High total bill")
-
     if not network:
+        reasons.append("Hospital is outside the insurer network")
         risk_score += 15
-        reasons.append("Non-network hospital")
-
     if history >= 3:
+        reasons.append("Frequent previous health claims linked to the customer")
         risk_score += 25
-        reasons.append("Frequent claim history")
 
-    # =====================================================
-    # 🔵 7. FINAL DECISION
-    # =====================================================
-
-    if risk_score >= 80:
-        decision = "Reject"
-    elif risk_score >= 40:
-        decision = "Needs Review"
-    else:
-        decision = "Approve"
-
-    if not reasons:
-        reasons.append("All checks passed")
-
-    return decision, reasons
+    return final_decision(
+        risk_score,
+        reasons,
+        "Health claim passed document completeness, diagnosis, billing, network, and history checks",
+    )

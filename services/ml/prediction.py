@@ -1,7 +1,23 @@
 import numpy as np
+import pandas as pd
 from services.ml.model_loader import load_model
 
 model = load_model()
+
+FEATURE_COLUMNS = [
+    "amount",
+    "history",
+    "high_amount",
+    "frequent_claims",
+    "domain_health",
+    "domain_vehicle",
+    "domain_life",
+    "domain_financial",
+    "non_network",
+    "high_damage",
+    "early_policy",
+    "income_mismatch",
+]
 
 def predict_fraud(domain, data):
 
@@ -145,13 +161,13 @@ def predict_fraud(domain, data):
             high_damage = 0
 
             early_policy = int(
-                domain == "Life" and data.get("policy", {}).get("duration", 1) < 1
+                domain == "Life" and data.get("policy", {}).get("age_years", 1) < 1
             )
 
             income_mismatch = 0
             non_network = int(hospital_network == 0)
 
-            features = np.array([[ 
+            features = pd.DataFrame([[
                 amount,
                 history,
                 high_amount,
@@ -164,7 +180,7 @@ def predict_fraud(domain, data):
                 high_damage,
                 early_policy,
                 income_mismatch
-            ]])
+            ]], columns=FEATURE_COLUMNS)
 
             prob = model.predict_proba(features)[0][1]
 

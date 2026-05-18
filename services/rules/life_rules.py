@@ -1,117 +1,85 @@
-def run(data):
+from services.rules.evidence import add_amount_mismatch, add_text_mismatch, final_decision, number
 
+
+def run(data):
     reasons = []
-    decision = "Approve"
     risk_score = 0
 
     policy = data.get("policy", {})
     incident = data.get("incident", {})
     docs = data.get("documents", {})
-    history = data.get("history", 0)
+    document_info = data.get("document_info", {})
+    history = number(data.get("history", 0))
 
-    claim_amount = data.get("financial", {}).get("claim_amount", 0)
-    sum_assured = policy.get("sum_assured", 0)
-    policy_age = policy.get("age_years", 0)
+    claim_amount = number(data.get("financial", {}).get("claim_amount"))
+    sum_assured = number(policy.get("sum_assured"))
+    policy_age = number(policy.get("age_years"))
+    cause = str(incident.get("cause", "")).lower()
+    hospitalized = bool(incident.get("hospitalized", False))
 
-    cause = incident.get("cause", "").lower()  # accident / illness / natural
-    hospitalized = incident.get("hospitalized", False)
-
-    # =====================================================
-    # 🔹 1. POLICY VALIDATION (HARD RULE)
-    # =====================================================
     if not policy.get("active", True):
-        return "Reject", ["Policy inactive"]
-
+        return "Reject", ["Policy is inactive on the claim event date"]
     if sum_assured <= 0:
-        return "Needs Review", ["Invalid policy details"]
-
+        return "Needs Review", ["Sum assured is missing or invalid"]
+    if claim_amount <= 0:
+        return "Needs Review", ["Claim amount is missing or invalid"]
     if claim_amount > sum_assured:
-        return "Reject", ["Claim exceeds sum assured"]
+        return "Reject", ["Claim amount exceeds sum assured"]
 
-    # =====================================================
-    # 🔹 2. DOCUMENT VALIDATION (VERY STRICT)
-    # =====================================================
-    required_docs = ["death_certificate"]
+    if not docs.get("death_certificate"):
+        return "Needs Review", ["Death certificate is mandatory for life claim review"]
 
-    missing = [d for d in required_docs if not docs.get(d)]
-    if missing:
-        return "Needs Review", [f"Missing mandatory document: {', '.join(missing)}"]
+    risk_score += add_text_mismatch(
+        reasons,
+        "Cause of death",
+        cause,
+        document_info.get("cause"),
+        risk_points=35,
+    )
+    risk_score += add_amount_mismatch(
+        reasons,
+        "sum assured",
+        sum_assured,
+        document_info.get("sum_assured"),
+        tolerance=0.02,
+        risk_points=30,
+    )
 
-    # Cause-specific docs
     if cause == "illness" and not docs.get("medical_report"):
-        return "Needs Review", ["Medical report required for illness claim"]
-
+        return "Needs Review", ["Medical report is required for illness-related life claim"]
     if cause == "accident" and not docs.get("police_report"):
-        reasons.append("Police report missing for accident")
-        risk_score += 25
-
-    # =====================================================
-    # 🔹 3. EARLY CLAIM CHECK (CRITICAL)
-    # =====================================================
-    if policy_age < 2:
-        reasons.append("Early claim (within 2 years)")
+        reasons.append("Police/FIR report is missing for accidental death")
         risk_score += 30
 
     if policy_age < 1:
-        reasons.append("Very early claim")
-        risk_score += 20
-
-    # =====================================================
-    # 🔹 4. CAUSE CONSISTENCY
-    # =====================================================
-    if cause == "accident" and not hospitalized:
-        reasons.append("No hospitalization record for accident")
-        risk_score += 20
-
-    if cause == "natural" and docs.get("police_report"):
-        reasons.append("Unusual: police report for natural death")
-        risk_score += 15
-
-    # =====================================================
-    # 🔹 5. CLAIM AMOUNT LOGIC (REAL WORLD)
-    # =====================================================
-    claim_ratio = claim_amount / sum_assured if sum_assured > 0 else 0
-
-    # Full claim is NORMAL in life insurance
-    if claim_ratio >= 0.95:
-        reasons.append("Full sum assured claim (normal)")
-
-    # Partial claim
-    elif claim_ratio < 0.3:
-        reasons.append("Partial claim (valid scenario)")
-
-    # =====================================================
-    # 🔹 6. HISTORY CHECK
-    # =====================================================
-    if history >= 2:
-        reasons.append("Multiple previous claims linked to policy/family")
+        reasons.append("Claim occurred within first policy year")
+        risk_score += 35
+    elif policy_age < 2:
+        reasons.append("Claim occurred within early policy period")
         risk_score += 25
 
-    # =====================================================
-    # 🔹 7. STRONG FRAUD SIGNALS
-    # =====================================================
+    claim_ratio = claim_amount / sum_assured
     if policy_age < 1 and claim_ratio >= 0.9:
-        reasons.append("Very early high-value claim")
-        risk_score += 40
+        reasons.append("Very early claim requests almost the full sum assured")
+        risk_score += 45
+    elif claim_ratio >= 0.95:
+        reasons.append("Full sum assured claim is expected in life insurance and was treated as normal")
 
-    # Missing medical consistency
+    if cause == "accident" and not hospitalized:
+        reasons.append("Accident claim has no matching hospitalization record")
+        risk_score += 20
+    if cause == "natural" and docs.get("police_report"):
+        reasons.append("Police report is unusual for natural death and should be checked")
+        risk_score += 10
     if cause == "illness" and not hospitalized:
-        reasons.append("No hospitalization for illness claim")
-        risk_score += 15
+        reasons.append("Illness death has no hospitalization or treatment record")
+        risk_score += 20
+    if history >= 2:
+        reasons.append("Multiple prior related claims are linked to policy/customer/family")
+        risk_score += 25
 
-    # =====================================================
-    # 🔹 FINAL DECISION (SAFE LOGIC)
-    # =====================================================
-    if risk_score >= 80:
-        decision = "Reject"
-
-    elif risk_score >= 40:
-        decision = "Needs Review"
-
-    else:
-        decision = "Approve"
-
-    if not reasons:
-        reasons.append("All checks passed")
-
-    return decision, reasons
+    return final_decision(
+        risk_score,
+        reasons,
+        "Life claim passed policy status, sum assured, document, cause-of-death, timing, and history checks",
+    )
