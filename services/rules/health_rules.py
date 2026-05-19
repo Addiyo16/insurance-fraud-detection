@@ -1,9 +1,9 @@
 from services.rules.evidence import (
     add_amount_mismatch,
-    add_text_mismatch,
     final_decision,
     missing_document_facts,
     missing_facts_reason,
+    normalize_text,
     number,
 )
 
@@ -19,11 +19,43 @@ def _diagnosis_category(diagnosis):
     diagnosis = str(diagnosis or "").lower()
     if any(term in diagnosis for term in ["fever", "cold", "viral", "flu"]):
         return "minor"
-    if any(term in diagnosis for term in ["infection", "pneumonia", "dengue", "typhoid"]):
+    if any(term in diagnosis for term in ["infection", "pneumonia", "dengue", "typhoid", "gallstone", "appendix", "appendicitis"]):
         return "moderate"
-    if any(term in diagnosis for term in ["surgery", "operation", "fracture", "cardiac", "cancer"]):
+    if any(term in diagnosis for term in ["surgery", "operation", "fracture", "cardiac", "cancer", "bypass", "transplant", "icu"]):
         return "major"
     return "moderate"
+
+
+def _document_supports_diagnosis(claim_diagnosis, document_info):
+    claim = str(claim_diagnosis or "").strip().lower()
+    if not claim:
+        return False
+
+    document_values = [
+        str(document_info.get("diagnosis", "")).lower(),
+        str(document_info.get("treatment", "")).lower(),
+    ]
+    document_text = " ".join(document_values)
+    if claim in document_text or any(part and part in document_text for part in claim.split()):
+        return True
+
+    related_terms = {
+        "gallstones": ["gallbladder", "cholecystectomy", "ultrasound"],
+        "appendix": ["appendicitis", "appendectomy"],
+        "appendicitis": ["appendix", "appendectomy"],
+        "fever": ["viral", "flu", "pyrexia"],
+    }
+    for term, aliases in related_terms.items():
+        if term in claim and any(alias in document_text for alias in aliases):
+            return True
+    return False
+
+
+def _matches_any(value, candidates):
+    normalized = normalize_text(value)
+    if not normalized:
+        return True
+    return any(normalized == normalize_text(candidate) for candidate in candidates or [])
 
 
 def run(data):
@@ -32,6 +64,8 @@ def run(data):
 
     financial = data.get("financial", {})
     hospital = data.get("hospital", {})
+    patient = data.get("patient", {})
+    policyholder = data.get("policyholder", {})
     admission = data.get("admission", {})
     docs = data.get("documents", {})
     document_info = data.get("document_info", {})
@@ -53,18 +87,28 @@ def run(data):
     if missing:
         return "Needs Review", [f"Missing mandatory health claim documents: {', '.join(missing)}"], 55
 
-    missing_facts = missing_document_facts(document_info, ["diagnosis", "total_bill", "days"])
+    missing_facts = missing_document_facts(document_info, ["diagnosis", "total_bill"])
     if missing_facts:
         return "Needs Review", [missing_facts_reason("Health", missing_facts)], 70
 
-    diagnosis_mismatch = add_text_mismatch(
-        reasons,
-        "Diagnosis",
-        diagnosis,
-        document_info.get("diagnosis"),
-        risk_points=1,
-    )
-    if diagnosis_mismatch:
+    if document_info.get("patient_names") and not _matches_any(patient.get("name"), document_info.get("patient_names")):
+        return "Reject", ["Invalid claim details: patient name does not match uploaded bill or medical report"], 92
+
+    if (
+        normalize_text(policyholder.get("name"))
+        and document_info.get("policyholder_name")
+        and normalize_text(policyholder.get("name")) != normalize_text(document_info.get("policyholder_name"))
+    ):
+        return "Reject", ["Invalid claim details: policyholder name does not match uploaded KYC document"], 90
+
+    if (
+        normalize_text(hospital.get("name"))
+        and document_info.get("hospital_name")
+        and normalize_text(hospital.get("name")) != normalize_text(document_info.get("hospital_name"))
+    ):
+        return "Reject", ["Invalid claim details: hospital name does not match uploaded bill"], 88
+
+    if not _document_supports_diagnosis(diagnosis, document_info):
         return "Reject", ["Invalid claim details: diagnosis in medical report does not match the claim form"], 92
 
     bill_mismatch = add_amount_mismatch(
@@ -78,18 +122,21 @@ def run(data):
     if bill_mismatch:
         return "Reject", ["Invalid claim details: final bill amount does not match uploaded bill"], 92
 
-    days_mismatch = add_amount_mismatch(
-        reasons,
-        "hospitalization days",
-        days,
-        document_info.get("days"),
-        tolerance=0.0,
-        risk_points=1,
-    )
-    if days_mismatch:
-        return "Reject", ["Invalid claim details: hospitalization days do not match uploaded medical/bill document"], 88
+    if document_info.get("days") not in (None, "", 0, 0.0):
+        days_mismatch = add_amount_mismatch(
+            reasons,
+            "hospitalization days",
+            days,
+            document_info.get("days"),
+            tolerance=0.0,
+            risk_points=1,
+        )
+        if days_mismatch:
+            return "Reject", ["Invalid claim details: hospitalization days do not match uploaded medical/bill document"], 88
 
-    category = _diagnosis_category(diagnosis)
+    category = _diagnosis_category(
+        " ".join([str(diagnosis), str(document_info.get("diagnosis", "")), str(document_info.get("treatment", ""))])
+    )
     baseline = DIAGNOSIS_BASELINES[category]
     per_day = total_bill / days
 
