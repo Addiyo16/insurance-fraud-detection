@@ -9,7 +9,7 @@ rules, a trained fraud-risk model, and local RAG-style explanations.
 - Local RAG explanations now cite relevant review standards from `rag/knowledge_base.py`.
 - Pipeline output includes rule decision, ML score, final score, reasons, and explanation.
 - Life insurance UI fields now match the rule engine.
-- Document verification fields compare claim-form values against values read from uploaded evidence.
+- Uploaded documents are parsed automatically and extracted facts are compared against claim-form values.
 - Vehicle rules now include low-IDV/minor-accident severity checks, RC mismatch rejection, IDV checks, late reporting, early policy claims, and total-loss style review.
 - Synthetic training data generation is deterministic and domain-specific.
 - Model loading is path-safe from any working directory.
@@ -22,9 +22,10 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-In each claim domain, use **Document verification values** to enter values
-read from uploaded documents or OCR. The system compares those values against
-the claim form and uses mismatches in the decision.
+In each claim domain, upload the required documents. The app shows
+**Extracted document facts** and uses those values for fraud checks. Text-based
+PDFs work best locally. Image OCR requires Tesseract to be installed on the
+machine or available in the deployment image.
 
 ## Retrain The Model
 

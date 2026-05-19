@@ -1,6 +1,8 @@
 fastapi
 uvicorn
 streamlit
+pypdf
+pytesseract
 pandas
 numpy
 scikit-learn

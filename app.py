@@ -38,37 +38,20 @@ if "history" not in st.session_state:
 # 🔹 HEALTH UI
 # =====================================================
 import streamlit as st
+from ocr.parser import extract_document_info
 
-def document_verification_ui(domain):
-    with st.expander("Document verification values"):
-        st.caption("Enter values read from uploaded documents or OCR so the system can compare them with the claim form.")
+def attach_extracted_document_info(domain, data):
+    info, text = extract_document_info(domain, data.get("documents", {}))
+    data["document_info"] = info
+    data["document_text"] = text
 
-        if domain == "Health":
-            return {
-                "diagnosis": st.text_input("Diagnosis shown in medical report"),
-                "total_bill": st.number_input("Final bill amount shown in document", 0),
-                "days": st.number_input("Hospitalization days shown in document", 0),
-            }
+    with st.expander("Extracted document facts", expanded=False):
+        if info:
+            st.json(info)
+        else:
+            st.info("No structured facts were extracted. Use text-based PDFs for best local extraction.")
 
-        if domain == "Vehicle":
-            return {
-                "vehicle_number": st.text_input("Vehicle number shown on RC"),
-                "idv": st.number_input("IDV shown on policy/RC", 0),
-                "estimated_cost": st.number_input("Repair estimate shown in survey/garage document", 0),
-                "accident_type": st.selectbox("Accident severity shown in evidence", ["", "Minor", "Major"]),
-            }
-
-        if domain == "Life":
-            return {
-                "cause": st.selectbox("Cause shown in death/medical document", ["", "Natural", "Illness", "Accident"]),
-                "sum_assured": st.number_input("Sum assured shown in policy document", 0),
-            }
-
-        return {
-            "income": st.number_input("Income shown in income proof/bank statement", 0),
-            "loan_amount": st.number_input("Loan amount shown in loan document", 0),
-            "emi_amount": st.number_input("EMI shown in loan document/bank statement", 0),
-        }
+    return data
 
 def health_ui():
     data = {}
@@ -153,8 +136,7 @@ def health_ui():
 
         # Assign to data
         data["documents"] = st.session_state.health_docs
-
-        data["document_info"] = document_verification_ui("Health")
+        attach_extracted_document_info("Health", data)
 
     return data
 
@@ -199,7 +181,7 @@ def vehicle_ui():
             "police": st.file_uploader("Police Report", key="doc_police"),
             "images": st.file_uploader("Accident Images", key="doc_images")
         }
-        data["document_info"] = document_verification_ui("Vehicle")
+        attach_extracted_document_info("Vehicle", data)
 
     return data
 
@@ -242,7 +224,7 @@ def life_ui():
             "medical_report": st.file_uploader("Medical Report"),
             "police_report": st.file_uploader("Police Report")
         }
-        data["document_info"] = document_verification_ui("Life")
+        attach_extracted_document_info("Life", data)
 
     return data
 
@@ -281,7 +263,7 @@ def financial_ui():
             "bank_statement": st.file_uploader("Bank Statement"),
             "loan_document": st.file_uploader("Loan Agreement")
         }
-        data["document_info"] = document_verification_ui("Financial")
+        attach_extracted_document_info("Financial", data)
 
     return data
 
