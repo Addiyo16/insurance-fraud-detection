@@ -1,4 +1,11 @@
-from services.rules.evidence import add_amount_mismatch, add_text_mismatch, final_decision, number
+from services.rules.evidence import (
+    add_amount_mismatch,
+    add_text_mismatch,
+    final_decision,
+    missing_document_facts,
+    missing_facts_reason,
+    number,
+)
 
 
 DIAGNOSIS_BASELINES = {
@@ -46,29 +53,41 @@ def run(data):
     if missing:
         return "Needs Review", [f"Missing mandatory health claim documents: {', '.join(missing)}"], 55
 
-    risk_score += add_text_mismatch(
+    missing_facts = missing_document_facts(document_info, ["diagnosis", "total_bill", "days"])
+    if missing_facts:
+        return "Needs Review", [missing_facts_reason("Health", missing_facts)], 70
+
+    diagnosis_mismatch = add_text_mismatch(
         reasons,
         "Diagnosis",
         diagnosis,
         document_info.get("diagnosis"),
-        risk_points=35,
+        risk_points=1,
     )
-    risk_score += add_amount_mismatch(
+    if diagnosis_mismatch:
+        return "Reject", ["Invalid claim details: diagnosis in medical report does not match the claim form"], 92
+
+    bill_mismatch = add_amount_mismatch(
         reasons,
         "final bill",
         total_bill,
         document_info.get("total_bill"),
         tolerance=0.03,
-        risk_points=35,
+        risk_points=1,
     )
-    risk_score += add_amount_mismatch(
+    if bill_mismatch:
+        return "Reject", ["Invalid claim details: final bill amount does not match uploaded bill"], 92
+
+    days_mismatch = add_amount_mismatch(
         reasons,
         "hospitalization days",
         days,
         document_info.get("days"),
         tolerance=0.0,
-        risk_points=25,
+        risk_points=1,
     )
+    if days_mismatch:
+        return "Reject", ["Invalid claim details: hospitalization days do not match uploaded medical/bill document"], 88
 
     category = _diagnosis_category(diagnosis)
     baseline = DIAGNOSIS_BASELINES[category]

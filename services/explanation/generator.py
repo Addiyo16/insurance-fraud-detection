@@ -84,19 +84,35 @@ def generate_explanation(
                 "- No hard-stop rule was triggered and the combined rule/ML score stayed within approval tolerance."
             )
         elif decision == "Needs Review":
-            lines.append(
-                "- The claim has one or more risk indicators that are not enough for automatic rejection."
-            )
-            lines.append(
-                "- A reviewer should validate the evidence before payment or denial."
-            )
+            if any("could not extract" in reason.lower() for reason in reasons):
+                lines.append(
+                    "- Uploaded documents are not readable enough to verify key claim facts automatically."
+                )
+                lines.append(
+                    "- Do not approve until the document team obtains readable evidence or manually verifies the missing fields."
+                )
+            else:
+                lines.append(
+                    "- The claim has one or more risk indicators that are not enough for automatic rejection."
+                )
+                lines.append(
+                    "- A reviewer should validate the evidence before payment or denial."
+                )
         else:
-            lines.append(
-                "- A hard-stop rule or very high-risk inconsistency was detected."
-            )
-            lines.append(
-                "- The system is recommending rejection/investigation because the claim facts conflict with policy, amount, or evidence controls."
-            )
+            if any("invalid claim details" in reason.lower() for reason in reasons):
+                lines.append(
+                    "- The claim form conflicts with uploaded document evidence."
+                )
+                lines.append(
+                    "- Treat this as invalid claim detail entry or possible misrepresentation until corrected by verified documents."
+                )
+            else:
+                lines.append(
+                    "- A hard-stop rule or very high-risk inconsistency was detected."
+                )
+                lines.append(
+                    "- The system is recommending rejection/investigation because the claim facts conflict with policy, amount, or evidence controls."
+                )
 
         lines.extend(["", "Evidence considered:"])
         lines.extend([f"- {reason}" for reason in reasons])

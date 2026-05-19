@@ -1,4 +1,10 @@
-from services.rules.evidence import add_amount_mismatch, final_decision, number
+from services.rules.evidence import (
+    add_amount_mismatch,
+    final_decision,
+    missing_document_facts,
+    missing_facts_reason,
+    number,
+)
 
 
 def run(data):
@@ -28,30 +34,42 @@ def run(data):
     if missing:
         return "Needs Review", [f"Missing financial claim documents: {', '.join(missing)}"], 55
 
-    risk_score += add_amount_mismatch(
+    missing_facts = missing_document_facts(document_info, ["income", "loan_amount", "emi_amount"])
+    if missing_facts:
+        return "Needs Review", [missing_facts_reason("Financial", missing_facts)], 70
+
+    income_mismatch = add_amount_mismatch(
         reasons,
         "income",
         income,
         document_info.get("income"),
         tolerance=0.08,
-        risk_points=30,
+        risk_points=1,
     )
-    risk_score += add_amount_mismatch(
+    if income_mismatch:
+        return "Reject", ["Invalid claim details: income does not match income proof or bank statement"], 90
+
+    loan_mismatch = add_amount_mismatch(
         reasons,
         "loan amount",
         loan,
         document_info.get("loan_amount"),
         tolerance=0.03,
-        risk_points=35,
+        risk_points=1,
     )
-    risk_score += add_amount_mismatch(
+    if loan_mismatch:
+        return "Reject", ["Invalid claim details: loan amount does not match loan document"], 92
+
+    emi_mismatch = add_amount_mismatch(
         reasons,
         "EMI",
         emi,
         document_info.get("emi_amount"),
         tolerance=0.08,
-        risk_points=20,
+        risk_points=1,
     )
+    if emi_mismatch:
+        return "Reject", ["Invalid claim details: EMI does not match loan or bank statement document"], 88
 
     if claim > loan:
         return "Reject", ["Claim amount exceeds the covered loan amount"], 98

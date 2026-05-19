@@ -1,6 +1,8 @@
 from services.rules.evidence import (
     add_amount_mismatch,
     final_decision,
+    missing_document_facts,
+    missing_facts_reason,
     normalize_vehicle_number,
     number,
     score_band,
@@ -37,12 +39,15 @@ def run(data):
     required_docs = ["rc", "police", "images"]
     missing = [doc for doc in required_docs if not docs.get(doc)]
     if missing:
-        reasons.append(f"Missing vehicle claim evidence: {', '.join(missing)}")
-        risk_score += 20
+        return "Needs Review", [f"Missing vehicle claim evidence: {', '.join(missing)}"], 65
+
+    missing_facts = missing_document_facts(document_info, ["vehicle_number", "idv", "estimated_cost"])
+    if missing_facts:
+        return "Needs Review", [missing_facts_reason("Vehicle", missing_facts)], 70
 
     rc_vehicle_number = document_info.get("vehicle_number")
-    if rc_vehicle_number and normalize_vehicle_number(vehicle.get("number")) != normalize_vehicle_number(rc_vehicle_number):
-        return "Reject", ["Vehicle number on RC does not match the claim form"], 95
+    if normalize_vehicle_number(vehicle.get("number")) != normalize_vehicle_number(rc_vehicle_number):
+        return "Reject", ["Invalid claim details: vehicle number on RC does not match the claim form"], 98
 
     risk_score += add_amount_mismatch(
         reasons,
@@ -63,10 +68,9 @@ def run(data):
 
     doc_accident_type = str(document_info.get("accident_type", "")).lower()
     if doc_accident_type and accident_type and doc_accident_type != accident_type:
-        reasons.append(
-            f"Accident severity mismatch: claim says {accident_type}, document says {doc_accident_type}"
-        )
-        risk_score += 35
+        return "Reject", [
+            f"Invalid claim details: accident severity mismatch. Claim says {accident_type}, document says {doc_accident_type}"
+        ], 92
 
     if estimated_cost > idv:
         return "Reject", ["Claimed repair cost exceeds insured declared value (IDV)"], 98

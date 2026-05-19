@@ -1,4 +1,11 @@
-from services.rules.evidence import add_amount_mismatch, add_text_mismatch, final_decision, number
+from services.rules.evidence import (
+    add_amount_mismatch,
+    add_text_mismatch,
+    final_decision,
+    missing_document_facts,
+    missing_facts_reason,
+    number,
+)
 
 
 def run(data):
@@ -29,21 +36,30 @@ def run(data):
     if not docs.get("death_certificate"):
         return "Needs Review", ["Death certificate is mandatory for life claim review"], 60
 
-    risk_score += add_text_mismatch(
+    missing_facts = missing_document_facts(document_info, ["cause", "sum_assured"])
+    if missing_facts:
+        return "Needs Review", [missing_facts_reason("Life", missing_facts)], 70
+
+    cause_mismatch = add_text_mismatch(
         reasons,
         "Cause of death",
         cause,
         document_info.get("cause"),
-        risk_points=35,
+        risk_points=1,
     )
-    risk_score += add_amount_mismatch(
+    if cause_mismatch:
+        return "Reject", ["Invalid claim details: cause of death does not match uploaded death/medical document"], 92
+
+    sum_assured_mismatch = add_amount_mismatch(
         reasons,
         "sum assured",
         sum_assured,
         document_info.get("sum_assured"),
         tolerance=0.02,
-        risk_points=30,
+        risk_points=1,
     )
+    if sum_assured_mismatch:
+        return "Reject", ["Invalid claim details: sum assured does not match uploaded policy document"], 90
 
     if cause == "illness" and not docs.get("medical_report"):
         return "Needs Review", ["Medical report is required for illness-related life claim"], 55

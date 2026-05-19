@@ -44,6 +44,21 @@ def add_amount_mismatch(reasons, label, claim_value, document_value, tolerance=0
     return 0
 
 
+def missing_document_facts(document_info, required_fields):
+    return [
+        field
+        for field in required_fields
+        if document_info.get(field) in (None, "", 0, 0.0)
+    ]
+
+
+def missing_facts_reason(domain, missing):
+    return (
+        f"Invalid or unverifiable {domain.lower()} document details: could not extract "
+        f"{', '.join(missing)} from uploaded documents. Do not approve until document facts are readable and verified."
+    )
+
+
 def score_band(value, bands):
     """Return points for a value using ordered threshold bands.
 
