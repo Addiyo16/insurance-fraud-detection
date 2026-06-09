@@ -22,7 +22,7 @@ graph TD
 
     User -->|Queries & Registrations| APIClient
     
-    APIClient -->|1. Try HTTP REST REST Calls (Port 8000)| FastAPI
+    APIClient -->|1. Try HTTP REST REST Calls on Port 8000| FastAPI
     APIClient -.->|2. Fallback direct SQLite Connections| sub_insurance
     APIClient -.->|2. Fallback direct SQLite Connections| sub_motor
     APIClient -.->|2. Fallback direct SQLite Connections| sub_medical
