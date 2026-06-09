@@ -1,0 +1,25 @@
+======================================================================
+                     CITY HOSPITAL - MEDICAL INVOICE
+======================================================================
+Invoice Number: INV-2026-88991
+Date: 2026-06-05
+Patient Name: Adarsh Sharma
+Policy Number: POL_H_1001
+Diagnosis: Viral Fever
+Admission Date: 2026-06-01
+Discharge Date: 2026-06-05
+Days of Admission: 4
+
+----------------------------------------------------------------------
+BILLING BREAKDOWN:
+- Room Charges (4 days @ $10,000/day):       $40,000.00
+- Pharmacy / Medicines:                     $15,000.00
+- ICU Charges:                              $0.00
+- Consultation & Nursing Fees:               $30,000.00
+----------------------------------------------------------------------
+TOTAL AMOUNT DUE:                           $85,000.00
+----------------------------------------------------------------------
+
+Certified By: Dr. Alice Vance
+Doctor License Number: DOC_12345
+Signature: [Alice Vance]

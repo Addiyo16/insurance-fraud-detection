@@ -1,4 +1,56 @@
-cloud deployment 
-analysis dashboard
-graphs and charts
-document reading
+======================================================================
+     GCP CLOUD RUN DEPLOYMENT GUIDE (FREE TIER COMPATIBLE)
+======================================================================
+
+Google Cloud Run is the perfect platform to host this application. It provides:
+- A generous free tier (2 million requests/month, 180k vCPU-sec, 360k GB-sec memory).
+- Automatic scaling to zero instances when idle (costing exactly $0).
+- Automatic HTTPS endpoint out-of-the-box.
+
+----------------------------------------------------------------------
+STEP 1: PREPARE REGISTRY & GCLOUD CLI
+----------------------------------------------------------------------
+1. Download and install the Google Cloud SDK:
+   https://cloud.google.com/sdk/docs/install
+2. Log in and initialize CLI:
+   gcloud auth login
+   gcloud init
+3. Create a new GCP Project or select an existing one:
+   gcloud projects create shield-ai-fraud --set-as-default
+4. Enable billing (required by GCP to use Cloud Run, even though you will stay within the free tier limits).
+5. Enable required APIs:
+   gcloud services enable run.googleapis.com artifactregistry.googleapis.com
+
+----------------------------------------------------------------------
+STEP 2: CREATE ARTIFACT REGISTRY
+----------------------------------------------------------------------
+Create a repository in Artifact Registry to store your container image:
+   gcloud artifacts repositories create shield-repo \
+       --repository-format=docker \
+       --location=us-central1 \
+       --description="ShieldAI Docker Repository"
+
+----------------------------------------------------------------------
+STEP 3: BUILD AND PUSH CONTAINER (GCP CLOUD BUILD)
+----------------------------------------------------------------------
+You can build the container directly on Google Cloud (no local Docker required!):
+   gcloud builds submit --tag us-central1-docker.pkg.dev/YOUR_PROJECT_ID/shield-repo/shield-app:latest
+
+*(Replace YOUR_PROJECT_ID with your actual GCP Project ID)*
+
+----------------------------------------------------------------------
+STEP 4: DEPLOY TO CLOUD RUN
+----------------------------------------------------------------------
+Deploy the container to Cloud Run. We pass the Gemini API key as an environment variable:
+   gcloud run deploy shield-app \
+       --image us-central1-docker.pkg.dev/YOUR_PROJECT_ID/shield-repo/shield-app:latest \
+       --platform managed \
+       --region us-central1 \
+       --allow-unauthenticated \
+       --set-env-vars="GEMINI_API_KEY=your_gemini_api_key_here"
+
+----------------------------------------------------------------------
+STEP 5: ACCESS YOUR APP
+----------------------------------------------------------------------
+Once complete, the terminal will output your live URL (e.g., https://shield-app-xyz.a.run.app).
+Open this URL in any browser to access the production-grade dashboard!

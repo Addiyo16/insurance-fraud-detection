@@ -1,175 +1,103 @@
 import numpy as np
 from services.ml.model_loader import load_model
+from services.api_client import get_claim_history_count
 
-model = load_model()
+try:
+    model = load_model()
+except Exception as e:
+    print("Error loading ML model in prediction.py:", e)
+    model = None
 
 def predict_fraud(domain, data):
+    """
+    Computes a ML-based fraud risk probability (0-100) using the trained Random Forest classifier.
+    Unifies all domains by mapping their fields into the standard feature set.
+    """
+    if model is None:
+        print("⚠️ ML model not loaded, returning default baseline score.")
+        return 15.0
 
     try:
+        # ---------------- 1. RESOLVE DYNAMIC POLICY HISTORY ----------------
+        policy_no = data.get("policyholder", {}).get("policy_no")
+        if not policy_no:
+            policy_no = data.get("policy", {}).get("policy_no", "")
+            
+        history = get_claim_history_count(policy_no)
 
-        # =====================================================
-        # 🔹 FINANCIAL DOMAIN (UNCHANGED ✅)
-        # =====================================================
-        if domain == "Financial":
+        # ---------------- 2. INITIALIZE FEATURES ----------------
+        amount = 0.0
+        
+        domain_health = int(domain == "Health")
+        domain_vehicle = int(domain == "Vehicle")
+        domain_life = int(domain == "Life")
+        domain_financial = int(domain == "Financial")
+        
+        non_network = 0
+        high_damage = 0
+        early_policy = 0
+        income_mismatch = 0
 
-            financial = data.get("financial", {})
-            policy = data.get("policy", {})
-            docs = data.get("documents", {})
+        # ---------------- 2. DOMAIN-SPECIFIC MAPPINGS ----------------
+        if domain == "Health":
+            amount = float(data.get("financial", {}).get("total_bill", 0))
+            network = data.get("hospital", {}).get("network", True)
+            non_network = int(not network)
 
-            income = financial.get("income", 0)
-            loan = financial.get("loan_amount", 0)
-            claim = financial.get("claim_amount", 0)
-
-            emi = policy.get("emi_amount", 0)
-            tenure = policy.get("tenure_months", 0)
-
-            if income <= 0 or loan <= 0:
-                return 80
-
-            loan_ratio = loan / income
-            emi_ratio = emi / income if emi > 0 else 0
-            claim_ratio = claim / loan if loan > 0 else 0
-
-            doc_score = sum([
-                1 if docs.get("kyc") else 0,
-                1 if docs.get("income_proof") else 0,
-                1 if docs.get("bank_statement") else 0,
-                1 if docs.get("loan_document") else 0
-            ]) / 4
-
-            score = 0
-
-            if loan_ratio > 20:
-                score += 35
-            elif loan_ratio > 10:
-                score += 25
-            elif loan_ratio > 6:
-                score += 15
-
-            if emi_ratio > 0.6:
-                score += 35
-            elif emi_ratio > 0.4:
-                score += 20
-
-            if tenure > 0:
-                expected_emi = loan / tenure
-
-                if emi < expected_emi * 0.3:
-                    score += 40
-                elif emi > expected_emi * 2:
-                    score += 20
-
-            if claim > loan:
-                score += 35
-            elif claim > loan * 0.9:
-                score += 15
-
-            score += (1 - doc_score) * 30
-
-            return round(min(score, 100), 2)
-
-        # =====================================================
-        # 🔹 VEHICLE DOMAIN (NEW PROFESSIONAL LOGIC ✅)
-        # =====================================================
         elif domain == "Vehicle":
+            amount = float(data.get("damage", {}).get("estimated_cost", 0))
+            high_damage = int(amount > 50000)
 
-            vehicle = data.get("vehicle", {})
-            damage = data.get("damage", {})
-            incident = data.get("incident", {})
-            docs = data.get("documents", {})
+        elif domain == "Life":
+            amount = float(data.get("financial", {}).get("claim_amount", 0))
+            
+            # Policy Duration (Years)
+            policy_duration = float(data.get("policy", {}).get("duration", 2.0))
+            early_policy = int(policy_duration < 1.0)
 
-            idv = vehicle.get("idv", 0)
-            cost = damage.get("estimated_cost", 0)
-            accident_type = incident.get("type", "").lower()
+        elif domain == "Financial":
+            amount = float(data.get("financial", {}).get("claim_amount", 0))
+            loan_amount = float(data.get("financial", {}).get("loan_amount", 0))
+            income = float(data.get("financial", {}).get("income", 1.0))
+            
+            # Income check (avoid division by zero)
+            income_mismatch = int(loan_amount > income * 5)
 
-            if idv <= 0:
-                return 60
+        # ---------------- 3. CORE LOGIC FEATURES ----------------
+        high_amount = int(amount > 100000)
+        frequent_claims = int(history > 3)
 
-            damage_ratio = cost / idv
+        import pandas as pd
 
-            doc_score = sum([
-                1 if docs.get("rc") else 0,
-                1 if docs.get("police") else 0,
-                1 if docs.get("images") else 0
-            ]) / 3
+        # ---------------- 4. CONSTRUCT FEATURE DATAFRAME ----------------
+        # Order and names must match preprocessing columns
+        feature_names = [
+            "amount", "history", "high_amount", "frequent_claims",
+            "domain_health", "domain_vehicle", "domain_life", "domain_financial",
+            "non_network", "high_damage", "early_policy", "income_mismatch"
+        ]
+        features = pd.DataFrame([[ 
+            amount,
+            history,
+            high_amount,
+            frequent_claims,
+            domain_health,
+            domain_vehicle,
+            domain_life,
+            domain_financial,
+            non_network,
+            high_damage,
+            early_policy,
+            income_mismatch
+        ]], columns=feature_names)
 
-            score = 0
-
-            # ---------------- CLAIM vs IDV ----------------
-            if damage_ratio > 1:
-                score += 50
-            elif damage_ratio > 0.8:
-                score += 25
-            elif damage_ratio > 0.5:
-                score += 10
-
-            # ---------------- ACCIDENT CONSISTENCY ----------------
-            if accident_type == "minor" and damage_ratio > 0.5:
-                score += 25
-
-            elif accident_type == "major" and damage_ratio < 0.1:
-                score += 10
-
-            # ---------------- DOCUMENT ----------------
-            score += (1 - doc_score) * 20
-
-            return round(min(score, 100), 2)
-
-        # =====================================================
-        # 🔹 HEALTH + LIFE (UNCHANGED ML)
-        # =====================================================
-        else:
-
-            if domain == "Health":
-                amount = data.get("financial", {}).get("total_bill", 0)
-                hospital_network = int(data.get("hospital", {}).get("network", 1))
-
-            elif domain == "Life":
-                amount = data.get("financial", {}).get("claim_amount", 0)
-                hospital_network = 0
-
-            else:
-                amount = 0
-                hospital_network = 0
-
-            history = data.get("history", 0)
-
-            high_amount = int(amount > 100000)
-            frequent_claims = int(history > 3)
-
-            domain_health = int(domain == "Health")
-            domain_vehicle = int(domain == "Vehicle")
-            domain_life = int(domain == "Life")
-            domain_financial = int(domain == "Financial")
-
-            high_damage = 0
-
-            early_policy = int(
-                domain == "Life" and data.get("policy", {}).get("duration", 1) < 1
-            )
-
-            income_mismatch = 0
-            non_network = int(hospital_network == 0)
-
-            features = np.array([[ 
-                amount,
-                history,
-                high_amount,
-                frequent_claims,
-                domain_health,
-                domain_vehicle,
-                domain_life,
-                domain_financial,
-                non_network,
-                high_damage,
-                early_policy,
-                income_mismatch
-            ]])
-
-            prob = model.predict_proba(features)[0][1]
-
-            return round(prob * 100, 2)
+        # ---------------- 5. RUN PREDICTION ----------------
+        prob = model.predict_proba(features)[0][1]
+        score = round(prob * 100, 2)
+        
+        # Safety Clamping
+        return max(0.0, min(100.0, score))
 
     except Exception as e:
-        print("Prediction Error:", e)
-        return 10
+        print("Prediction Error in ML model:", e)
+        return 20.0

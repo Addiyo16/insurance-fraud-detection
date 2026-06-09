@@ -1,187 +1,111 @@
-def run(data):
+from services.api_client import get_policy_details, verify_vehicle, get_police_report, get_claim_history_count, check_duplicate_claim
 
+def run(data):
     reasons = []
     decision = "Approve"
     risk_score = 0
 
+    # ---------------- EXTRACT FIELDS ----------------
+    policy_no = data.get("policy", {}).get("policy_no", "").strip()
+    
     vehicle = data.get("vehicle", {})
-    damage = data.get("damage", {})
-    incident = data.get("incident", {})
-    docs = data.get("documents", {})
-    policy = data.get("policy", {})
-    history = data.get("history", 0)
-
+    plate = vehicle.get("number", "").strip()
     idv = vehicle.get("idv", 0)
+    vehicle_type = vehicle.get("type", "").lower()
+    
+    damage = data.get("damage", {})
     estimated_cost = damage.get("estimated_cost", 0)
+    
+    incident = data.get("incident", {})
     accident_type = incident.get("type", "").lower()
     location = incident.get("location", "").lower()
-    vehicle_type = vehicle.get("type", "").lower()
 
-    # =====================================================
-    # 🔹 1. BASIC VALIDATION
-    # =====================================================
+    # ---------------- 1. REGISTRY POLICY CHECK ----------------
+    if not policy_no:
+        return "Reject", ["Policy number is required for verification."]
+        
+    registry_policy = get_policy_details(policy_no)
+    if not registry_policy:
+        return "Reject", [f"Invalid Policy Number '{policy_no}': Record not found in registry."]
+        
+    if registry_policy["status"].lower() != "active":
+        return "Reject", [f"Policy '{policy_no}' is currently {registry_policy['status']}."]
+
+    # DYNAMIC DUPLICATE CLAIM CHECK
+    if estimated_cost > 0 and check_duplicate_claim(policy_no, estimated_cost):
+        return "Reject", [f"Claim Rejected: A vehicle claim for the exact same amount (${estimated_cost}) already exists under Policy '{policy_no}'."]
+
+    # DYNAMIC HISTORY CHECK
+    history_count = get_claim_history_count(policy_no)
+    if history_count >= 3:
+        reasons.append(f"⚠ High claim frequency: Policyholder has {history_count} previous vehicle claims logged in the database ledger.")
+        risk_score += 20
+
+    # ---------------- 2. VEHICLE REGISTRATION CHECK ----------------
+    if not plate:
+        return "Reject", ["License plate number is required."]
+        
+    vehicle_record = verify_vehicle(plate)
+    if not vehicle_record:
+        return "Reject", [f"Vehicle license plate '{plate}' is not registered in the motor vehicle database."]
+        
+    if vehicle_record["registration_status"].lower() == "stolen":
+        return "Reject", [f"Claim Rejected: Vehicle '{plate}' is officially flagged as STOLEN in the registry."]
+
+    # Verify ownership
+    policyholder_name = registry_policy["full_name"].lower().strip()
+    owner_name = vehicle_record["registered_owner_name"].lower().strip()
+    if policyholder_name != owner_name:
+        reasons.append(f"⚠ Registered owner '{vehicle_record['registered_owner_name']}' mismatch with policyholder.")
+        risk_score += 35
+
+    # ---------------- 3. POLICE REPORT CHECK ----------------
+    police_record = get_police_report(plate)
+    if not police_record:
+        reasons.append("⚠ No official police accident report found in traffic logs.")
+        risk_score += 25
+    else:
+        # Cross check location
+        report_location = police_record["incident_location"].lower()
+        if location and location not in report_location:
+            reasons.append(f"⚠ Location discrepancy: UI location '{location}' vs Police Report location '{report_location}'")
+            risk_score += 20
+            
+        # Cross check severity
+        report_severity = police_record["severity"].lower()
+        if accident_type == "minor" and report_severity == "major":
+            reasons.append("Accident severity reported as minor, but police log indicates major collision.")
+            risk_score += 15
+
+    # ---------------- 4. COST & VALUE CHECKS ----------------
     if idv <= 0:
-        return "Needs Review", ["Invalid or missing vehicle IDV"]
+        return "Needs Review", ["Invalid or missing vehicle IDV."]
 
     damage_ratio = estimated_cost / idv
 
-    # =====================================================
-    # 🔹 2. LOCATION CHECK
-    # =====================================================
-    if location:
-        if not any(ind in location for ind in ["india", "maharashtra", "delhi", "mumbai", "pune", "bangalore"]):
-            reasons.append("⚠ Accident location outside expected region (needs verification)")
-            risk_score += 10
-
-    # =====================================================
-    # 🔹 3. HIGH CLAIM FLAG (NO PENALTY)
-    # =====================================================
-    if damage_ratio >= 0.8:
-        reasons.append("⚠ High claim amount (close to insured value) – recommended manual review")
-
-    # =====================================================
-    # 🔹 4. HARD RULE
-    # =====================================================
     if estimated_cost > idv:
-        return "Reject", ["Claim exceeds insured vehicle value (IDV)"]
+        return "Reject", [f"Estimated repair cost (${estimated_cost}) exceeds the total Insured Declared Value (${idv}). Total loss rules apply."]
 
-    # =====================================================
-    # 🔹 5. CLAIM vs IDV
-    # =====================================================
-    if damage_ratio > 0.8:
-        reasons.append("High claim relative to IDV")
-        risk_score += 25
+    if damage_ratio >= 0.8:
+        reasons.append("High claim amount (near total loss threshold).")
+        risk_score += 20
 
-    elif damage_ratio > 0.5:
-        reasons.append("Moderately high damage")
-        risk_score += 10
+    if accident_type == "minor" and damage_ratio >= 0.6:
+        return "Reject", ["Inconsistent: High damage cost claimed for minor accident severity."]
 
-    # =====================================================
-    # 🔹 STRONG CONSISTENCY RULES
-    # =====================================================
+    if vehicle_type == "bike" and damage_ratio > 0.7:
+        reasons.append("High damage percentage for a two-wheeler claim.")
+        risk_score += 15
 
-    # 🚨 Minor accident but very high claim → Reject
-    if accident_type == "minor" and damage_ratio >= 0.9:
-        return "Reject", ["High claim inconsistent with minor accident"]
-
-    # ⚠ Major accident high claim → Needs Review
-    if accident_type == "major" and damage_ratio >= 0.8:
-        reasons.append("High claim in major accident (requires review)")
+    # ---------------- 5. FINAL SCORE AGGREGATION ----------------
+    if risk_score >= 80:
+        decision = "Reject"
+    elif risk_score >= 40:
         decision = "Needs Review"
-
-    # =====================================================
-    # 🔹 6. ACCIDENT CONSISTENCY
-    # =====================================================
-
-    # Minor + low claim → normal
-    if accident_type == "minor" and damage_ratio < 0.2:
-        reasons.append("Low damage for minor accident (normal case)")
-
-    # Minor + high claim
-    elif accident_type == "minor":
-
-    # 🔹 Low IDV vehicles → stricter rules
-        if idv < 200000 and damage_ratio >= 0.4:
-            reasons.append("High claim for minor accident (low-value vehicle)")
-            risk_score += 40
-
-    # 🔹 Normal vehicles
-    elif damage_ratio > 0.5:
-        reasons.append("Damage too high for minor accident")
-        risk_score += 35
-
-    # Major + very low claim
-    elif accident_type == "major" and damage_ratio < 0.05:
-        reasons.append("Very low claim for major accident (inconsistent)")
-        risk_score += 20
-
-    elif accident_type == "major" and damage_ratio < 0.1:
-        reasons.append("Low claim for major accident")
-        risk_score += 10
-
-    # =====================================================
-    # 🔹 7. DOCUMENT VALIDATION
-    # =====================================================
-    required_docs = ["rc", "police", "images"]
-    missing = [d for d in required_docs if not docs.get(d)]
-
-    if missing:
-        reasons.append(f"Missing documents: {', '.join(missing)}")
-        risk_score += 15
-
-    # 🔹 Document strength
-    doc_count = sum([
-        1 if docs.get("rc") else 0,
-        1 if docs.get("police") else 0,
-        1 if docs.get("images") else 0
-    ])
-
-    if doc_count < 2:
-        reasons.append("Insufficient supporting documents")
-        risk_score += 15
-
-    # =====================================================
-    # 🔹 8. TIMING CHECK (NEW)
-    # =====================================================
-    delay = incident.get("report_delay_hours", 0)
-
-    if delay > 72:
-        reasons.append("Very late reporting")
-        risk_score += 25
-    elif delay > 48:
-        reasons.append("Late reporting")
-        risk_score += 10
-
-    # =====================================================
-    # 🔹 9. POLICY AGE (NEW)
-    # =====================================================
-    policy_age = policy.get("age_months", 12)
-
-    if policy_age < 1 and damage_ratio > 0.5:
-        reasons.append("Early claim after policy start with high damage")
-        risk_score += 25
-
-    # =====================================================
-    # 🔹 10. CLAIM HISTORY (NEW)
-    # =====================================================
-    if history >= 3:
-        reasons.append("Multiple previous claims")
-        risk_score += 20
-
-    # =====================================================
-    # 🔹 11. VEHICLE TYPE LOGIC (NEW)
-    # =====================================================
-    if vehicle_type == "bike" and damage_ratio > 0.6:
-        reasons.append("High damage for bike")
-        risk_score += 20
-
-    if vehicle_type == "truck" and accident_type == "major" and damage_ratio < 0.1:
-        reasons.append("Low damage for major accident (truck)")
-        risk_score += 15
-
-    # =====================================================
-    # 🔹 12. EXTREME CASE
-    # =====================================================
-    if estimated_cost > 1_000_000:
-        reasons.append("Very high repair cost (manual verification)")
-        risk_score += 15
-
-    # =====================================================
-    # 🔹 FINAL DECISION (PROTECTED)
-    # =====================================================
-    if decision != "Needs Review":
-        if risk_score >= 80:
-            decision = "Reject"
-        elif risk_score >= 40:
-            decision = "Needs Review"
-        else:
-            decision = "Approve"
-
-    # Force review for strong inconsistency
-    if "Very low claim for major accident (inconsistent)" in reasons:
-        decision = "Needs Review"
+    else:
+        decision = "Approve"
 
     if not reasons:
-        reasons.append("All vehicle checks passed")
+        reasons.append("All vehicle registry and damage consistency checks passed.")
 
     return decision, reasons

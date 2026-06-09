@@ -1,34 +1,78 @@
-def run(data):
+from services.api_client import get_policy_details, verify_doctor, verify_hospital, get_claim_history_count, check_duplicate_claim
 
+def run(data):
     reasons = []
     decision = "Approve"
     risk_score = 0
 
-    # ---------------- EXTRACT ----------------
-    policy = data.get("policy", {})
+    # ---------------- UI & DOC DATA EXTRACT ----------------
+    policy_no = data.get("policyholder", {}).get("policy_no", "").strip()
+    patient_name = data.get("patient", {}).get("name", "").strip()
+    hospital_name = data.get("hospital", {}).get("name", "").strip()
+    diagnosis = data.get("hospital", {}).get("diagnosis", "").lower()
+    
     financial = data.get("financial", {})
-    hospital = data.get("hospital", {})
-    admission = data.get("admission", {})
-    docs = data.get("documents", {})
-    history = data.get("history", 0)
-
     total_bill = financial.get("total_bill", 0)
     icu = financial.get("icu", 0)
     medicine = financial.get("medicine", 0)
-
-    diagnosis = hospital.get("diagnosis", "").lower()
-    network = hospital.get("network", True)
-
+    
+    admission = data.get("admission", {})
     days = max(admission.get("days", 1), 1)
     admission_type = admission.get("type", "").lower()
 
-    # ---------------- DERIVED ----------------
-    per_day = total_bill / days if days > 0 else total_bill
+    # ---------------- 1. REGISTRY POLICY CHECK ----------------
+    if not policy_no:
+        return "Reject", ["Policy number is required for verification."]
+        
+    registry_policy = get_policy_details(policy_no)
+    if not registry_policy:
+        return "Reject", [f"Invalid Policy Number '{policy_no}': Record not found in registry."]
+        
+    if registry_policy["status"].lower() != "active":
+        return "Reject", [f"Policy '{policy_no}' is currently {registry_policy['status']} (Coverage suspended)."]
 
-    # =====================================================
-    # 🔴 1. CONTEXT-AWARE BASELINES
-    # =====================================================
+    # DYNAMIC DUPLICATE CLAIM CHECK
+    if total_bill > 0 and check_duplicate_claim(policy_no, total_bill):
+        return "Reject", [f"Claim Rejected: A claim for the exact same amount (${total_bill}) already exists under Policy '{policy_no}' (Potential duplicate submission)."]
 
+    # DYNAMIC HISTORY CHECK
+    history_count = get_claim_history_count(policy_no)
+    if history_count >= 3:
+        reasons.append(f"⚠ High claim frequency: Policyholder has {history_count} previous claims in the registry ledger.")
+        risk_score += 25
+
+    # Verify Patient Identity
+    holder_name = registry_policy["full_name"].lower().strip()
+    patient_name_clean = patient_name.lower().strip()
+    if patient_name_clean and patient_name_clean != holder_name:
+        reasons.append("⚠ Patient name does not match the primary policyholder.")
+        risk_score += 30
+
+    # ---------------- 2. HOSPITAL & DOCTOR CHECK ----------------
+    if hospital_name:
+        hospital_record = verify_hospital(hospital_name)
+        if not hospital_record:
+            reasons.append(f"⚠ Hospital '{hospital_name}' is not registered in the medical directory.")
+            risk_score += 20
+        else:
+            if hospital_record["blacklist_flag"] == 1:
+                return "Reject", [f"Claim Rejected: Hospital '{hospital_name}' is blacklisted for fraud."]
+            if not hospital_record["network_flag"]:
+                reasons.append("Hospital is out of network (higher co-pay applies).")
+                risk_score += 10
+
+    # Verify Doctor License (Extracted from OCR or parsed from medical reports)
+    # The OCR will extract this, let's get it from the data block
+    doctor_license = data.get("ocr_data", {}).get("doctor_license", "").strip()
+    if doctor_license:
+        doc_record = verify_doctor(doctor_license)
+        if not doc_record:
+            reasons.append(f"⚠ Certifying Doctor License '{doctor_license}' not found in medical council registry.")
+            risk_score += 25
+        elif doc_record["blacklist_flag"] == 1 or doc_record["status"].lower() == "suspended":
+            return "Reject", [f"Claim Rejected: Certifying doctor ({doc_record['doctor_name']}) has a suspended/blacklisted license."]
+
+    # ---------------- 3. MEDICAL & BILLING BASELINES ----------------
     BASELINES = {
         "minor": {"per_day": 8000, "total": 50000},
         "moderate": {"per_day": 20000, "total": 200000},
@@ -46,90 +90,31 @@ def run(data):
 
     baseline = BASELINES[category]
 
-    # =====================================================
-    # 🔴 2. HARD RULES
-    # =====================================================
-
+    # Hard triggers
     if total_bill > baseline["total"] * 3:
-        return "Reject", ["Bill exceeds expected range for diagnosis"]
+        return "Reject", [f"Total Bill (${total_bill}) is extremely inflated relative to baseline for {category} illness (${baseline['total']})."]
 
     if category == "minor" and icu > 20000:
-        return "Reject", ["ICU usage for minor illness"]
+        return "Reject", ["ICU billing charges registered for minor illness."]
 
     if days <= 2 and total_bill > baseline["total"] * 2:
-        return "Reject", ["Short stay with inflated billing"]
+        return "Reject", ["Short-stay hospitalization with highly inflated billing."]
 
-    if per_day > baseline["per_day"] * 3:
-        return "Reject", ["Unrealistic per-day hospital charges"]
+    # Heuristic scoring
+    expected_total = baseline["per_day"] * days
+    if total_bill > expected_total * 1.5:
+        reasons.append("High per-day billing charges detected.")
+        risk_score += 25
 
     if medicine > total_bill * 0.7:
-        return "Reject", ["Unusual medicine cost proportion"]
-
-    # =====================================================
-    # 🔹 3. DOCUMENT VALIDATION
-    # =====================================================
-
-    required_docs = ["final_bill", "medical_report", "kyc"]
-    missing = [d for d in required_docs if docs.get(d) is None]
-
-    if missing:
-        return "Needs Review", [f"Missing documents: {', '.join(missing)}"]
-
-    # =====================================================
-    # 🔹 4. LOW BILL ANOMALY (YOUR NEW LOGIC)
-    # =====================================================
-
-    expected_total = baseline["per_day"] * days
-
-    if admission_type == "emergency" and days >= 1:
-
-        if total_bill < expected_total * 0.2:
-            return "Needs Review", ["Bill significantly lower than expected for treatment"]
-
-        elif total_bill < expected_total * 0.5:
-            risk_score += 15
-            reasons.append("Bill lower than expected range")
-
-    # =====================================================
-    # 🔹 5. CONSISTENCY CHECKS
-    # =====================================================
+        reasons.append("Unusual medicine cost proportion (>70% of total bill).")
+        risk_score += 20
 
     if admission_type == "planned" and category == "minor":
-        risk_score += 20
-        reasons.append("Planned admission for minor illness")
-
-    if icu > 0 and days <= 1:
-        risk_score += 25
-        reasons.append("ICU used for very short stay")
-
-    if category == "minor" and total_bill > baseline["total"]:
-        risk_score += 30
-        reasons.append("Cost exceeds expected for minor illness")
-
-    # =====================================================
-    # 🔹 6. RISK SIGNALS
-    # =====================================================
-
-    if per_day > baseline["per_day"] * 1.5:
-        risk_score += 25
-        reasons.append("High per-day cost")
-
-    if total_bill > baseline["total"] * 1.5:
-        risk_score += 20
-        reasons.append("High total bill")
-
-    if not network:
+        reasons.append("Planned inpatient admission registered for minor illness.")
         risk_score += 15
-        reasons.append("Non-network hospital")
 
-    if history >= 3:
-        risk_score += 25
-        reasons.append("Frequent claim history")
-
-    # =====================================================
-    # 🔵 7. FINAL DECISION
-    # =====================================================
-
+    # ---------------- 4. FINAL SCORE AGGREGATION ----------------
     if risk_score >= 80:
         decision = "Reject"
     elif risk_score >= 40:
@@ -138,6 +123,6 @@ def run(data):
         decision = "Approve"
 
     if not reasons:
-        reasons.append("All checks passed")
+        reasons.append("All health registry and baseline checks passed.")
 
     return decision, reasons
